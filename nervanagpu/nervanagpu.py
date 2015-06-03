@@ -20,7 +20,7 @@ from struct import unpack_from
 from pytools import memoize, memoize_method
 from float_ew import call_compound_kernel
 from layers import DataLayer, FullLayer, ConvLayer, PoolLayer, _get_sm_count
-
+import cudaconvnet
 
 class GPUTensor(object):
 
@@ -535,6 +535,17 @@ class NervanaGPU(object):
             layer.fprop_grid, layer.fprop_block, layer.kernel_args, layer.lut_size,
             I, F, O, alpha, relu, False, repeat)
 
+    def fprop_cuda_conv(self, layer, I, F, O, alpha=1.0, relu=False, repeat=1):
+
+        assert layer.sizeI == I.size
+        assert layer.sizeF == F.size
+        assert layer.sizeO == O.size
+
+        return self._execute_cuda_conv(
+            layer, "fprop", layer.fprop_size,
+            layer.fprop_grid, layer.fprop_block, layer.kernel_args, layer.lut_size,
+            I, F, O, alpha, relu, False, repeat)
+
     def bprop_conv(self, layer, F, E, grad_I, alpha=1.0, repeat=1):
 
         assert layer.sizeF == F.size
@@ -557,8 +568,21 @@ class NervanaGPU(object):
             layer.updat_grid, layer.updat_block, layer.update_args, 0,
             I, E, grad_F, alpha, False, True, repeat)
 
-    def _execute_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
+    def get_kernel_args(self, numImages, numFilters,
+                imgSizeY, imgSizeX, filterSize, paddingStart,
+                moduleStride,
+                numModulesY, numModulesX, imgStride,
+                scaleTargets, scaleOutputs,
+                conv):
 
+        return  [numImages, numFilters,
+                imgSizeY, imgSizeX, filterSize, paddingStart,
+                moduleStride,
+                numModulesY, numModulesX, imgStride,
+                scaleTargets, scaleOutputs,
+                conv]
+
+    def _execute_cuda_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
         assert B.dtype == C.dtype
 
         clss  = "hconv" if C.dtype.type is np.float16 else "sconv"
@@ -569,7 +593,40 @@ class NervanaGPU(object):
         if C.rounding: flags |= 1
         if relu:       flags |= 2
 
-        kernel = _get_conv_kernel(self.cubin_path, clss, op, size)
+
+        template_params = {
+            'B_Y': 128,
+            'B_X': 128,
+            'imgsPerThread': 4,
+            'filtersPerThread': 1,
+            'numColors': 3,
+            'pixelCache': 4,
+            'scaleFlag': 'false',
+            'checkImgBounds': 'true'
+            }
+
+        kernel = _get_cuda_conv_kernel(self.cubin_path, clss, op, size, template_params)
+        params = [grid, (4, 32, 1), A.gpudata, B.gpudata, C.gpudata]
+        params.extend(self.get_kernel_args(128, 128, 64, 64, 5, 0, 1, 1, 2, 2, 1, 1, True))
+        # params = [grid, block, _get_rand_state(),
+        #           C.gpudata, A.gpudata, B.gpudata,
+        #           alpha, flags ]
+        # params.extend(args)
+        kernel.prepared_call(*params)
+
+
+               
+    def _execute_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
+        assert B.dtype == C.dtype
+
+        clss  = "hconv" if C.dtype.type is np.float16 else "sconv"
+        if   A.dtype.type is np.uint8: op += '_u8'
+        elif A.dtype.type is np.int8:  op += '_s8'
+
+        flags = 0
+        if C.rounding: flags |= 1
+        if relu:       flags |= 2
+
         params = [grid, block, _get_rand_state(),
                   C.gpudata, A.gpudata, B.gpudata,
                   alpha, flags ]
@@ -1029,6 +1086,15 @@ def _get_conv_kernel(path, clss, op, size):
     func   = module.get_function(kernel)
     func.prepare("PPPPfIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
     #print "Loaded: ", kernel
+    return func
+
+#@context_dependent_memoize
+def _get_cuda_conv_kernel(path, clss, op, size, template_params):
+    module = cudaconvnet.get_module(template_params)
+    kernel = "filterActs_YxX_color_preload_ty_4_tx_32_i_4_f_12_px_4_cc_3_tex"
+    kernel = "filterActs_YxX_color"
+    func   = module.get_function(kernel)
+    func.prepare("PPPIIIIIIIIIIff?")
     return func
 
 @context_dependent_memoize
