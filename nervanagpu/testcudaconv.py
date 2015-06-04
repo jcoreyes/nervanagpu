@@ -11,7 +11,7 @@ logger = logging.getLogger()
 def run():
     ng = NervanaGPU(stochastic_round=False)
 
-    bt = np.float32
+    dt = np.float32
     # N: Number of images in mini-batch
     # C: Number of input feature maps
     # K: Number of output feature maps
@@ -42,10 +42,10 @@ def run():
     R = 8
     S = 8
 
-    pad_h = pad_w = 2
+    pad_h = pad_w = 0
     str_h = str_w = 4
 
-    layer = ng.conv_layer(bt, N, C, K,
+    layer = ng.conv_layer(dt, N, C, K,
             D=D, H=H, W=W,
             T=T, R=R, S=S,
             pad_d=0, pad_h=pad_h, pad_w=pad_w,
@@ -57,11 +57,12 @@ def run():
 
     numModulesY = int(math.ceil(float(H - R + 1 + 2*pad_h) / str_h))
     numModulesX = int(math.ceil(float(W - S + 1 + 2*pad_w) / str_w))
+
     print "Num Modules ", numModulesX, numModulesY
 
-    I = ng.ones((C, H, W, N))
-    F = ng.ones((C, S*R, numFilters))
-    O = ng.zeros((numFilters, numModulesY, numModulesX, N))
+    I = ng.ones((C, H, W, N), dtype=dt)
+    F = ng.ones((C, S*R, numFilters), dtype=dt)
+    O = ng.zeros((numFilters, numModulesY, numModulesX, N), dtype=dt)
     layer.sizeI = I.size
     layer.sizeF = F.size
     layer.sizeO = O.size

@@ -1,3 +1,4 @@
+#include <stdio.h>
 __device__ __forceinline__ void filterActs_YxX_color_preload_ty_4_tx_32_f_16_cc_3_setImgCoords(int fPidx, int imgLoadModPosY, int imgLoadModPosX,
                                                                                         int imgSizeX, int filterSize, int& iPidx) {
     int x = imgLoadModPosX + (fPidx) % filterSize;
@@ -838,7 +839,9 @@ __global__ void filterActs_YxX_color(float* images, float* filters, float* targe
     targets += moduleIdx * numImages
             + (blockFilterIdx * B_Y * filtersPerThread + threadIdx.y*filtersPerThread) * numImages * numModulesY * numModulesX
             + myImgIdx;
-
+    // printf("%d\n", moduleIdx * numImages
+    //         + (blockFilterIdx * B_Y * filtersPerThread + threadIdx.y*filtersPerThread) * numImages * numModulesY * numModulesX
+    //         + myImgIdx);
 
     float prod[filtersPerThread][imgsPerThread];
     #pragma unroll
@@ -950,6 +953,7 @@ __global__ void filterActs_YxX_color(float* images, float* filters, float* targe
             if (!checkImgBounds || myImgIdx + g * B_X < numImages) {
                 #pragma unroll
                 for (int f = 0; f < filtersPerThread; f++) {
+                    //printf("%d %d %d %d %d %d %d\n", g * B_X + f * B_Y * numImages * numModules, g, B_X, f, B_Y, numImages, numModules);
                     targets[g * B_X + f * numImages * numModules] = scaleOutputs * prod[f][g];
                 }
             }
