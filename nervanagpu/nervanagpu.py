@@ -21,6 +21,7 @@ from pytools import memoize, memoize_method
 from float_ew import call_compound_kernel
 from layers import DataLayer, FullLayer, ConvLayer, PoolLayer, _get_sm_count
 import cudaconvnet
+import math
 
 class GPUTensor(object):
 
@@ -585,36 +586,115 @@ class NervanaGPU(object):
     def _execute_cuda_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
         assert B.dtype == C.dtype
 
-        clss  = "hconv" if C.dtype.type is np.float16 else "sconv"
-        if   A.dtype.type is np.uint8: op += '_u8'
-        elif A.dtype.type is np.int8:  op += '_s8'
+        imgSizeY = A.shape[1]
+        numModulesY = C.shape[1]
+        numModulesX = C.shape[2]
+        paddingStart = 0
+        moduleStride = layer.strides[1]
+        numImgColors = A.shape[0]
+        numGroups = 1
+        scaleTargets = False
+        scaleOutput = False
+        conv = True
 
-        flags = 0
-        if C.rounding: flags |= 1
-        if relu:       flags |= 2
+        kernel = self._filterActs(A, B, C,
+                       imgSizeY, numModulesY, numModulesX, paddingStart, moduleStride,
+                       numImgColors, numGroups,
+                       scaleTargets, scaleOutput, conv)
 
+
+    def _filterActs(self, A, B, C,
+                       imgSizeY, numModulesY, numModulesX, paddingStart, moduleStride,
+                       numImgColors, numGroups,
+                       scaleTargets, scaleOutput, conv):
+        # * images:      (numColors, imgSizeY, imgSizeX, numImages) with stride given
+        # * filters:     (numColors, filterPixels, numFilters) if conv
+        # *              (numModules, numColors, filterPixels, numFilters) otherwise
+        # *
+        # * targets:     (numFilters, numModulesY, numModulesX, numImages)
+        images = A.gpudata
+        filters = B.gpudata
+        targets = C.gpudata
+        numFilterColors = numImgColors / numGroups
+        numFilters = B.shape[2]
+        numModules = numModulesY * numModulesX
+        numImages = A.shape[3]
+        imgPixels = A.shape[1] * A.shape[2]
+        imgSizeX = imgPixels / imgSizeY
+        filterModuleMult = 1 if conv else numModules #conv ? 1 : numModules
+       
+        assert(numGroups > 1 or (numImgColors > 0 and (numImgColors <= 3 or numImgColors % 4 == 0)))
+        assert(numGroups == 1 or numFilterColors % 4 == 0)
+        assert(numFilters % (16 * numGroups) == 0)
+        assert(numImgColors % numGroups == 0)
+        assert(A.size/A.shape[3] == imgPixels * numImgColors)
+        assert(imgSizeY * imgSizeX == imgPixels)
+        numFiltersPerGroup = numFilters / numGroups
+        imgStride = A.shape[3] # images does not need to be a contiguous matri
+        filterPixels = B.shape[1] # (filterModuleMult * numFilterColors)
+        filterSize = int(math.sqrt(filterPixels))
+        assert(filterSize * filterSize == filterPixels)
+        #print B.shape
+        #print numFilterColors, filterPixels, filterModuleMult
+        #assert(B.size == filterModuleMult * numFilterColors * filterPixels)
+        # These routines don't handle the case when only part of the image is visited in the convolutio
+        assert(paddingStart <= 0)
+        print paddingStart + (numModulesX-1)*moduleStride + filterSize
+        #assert(paddingStart + (numModulesX-1)*moduleStride + filterSize >= imgSizeX)
+        #assert(paddingStart + (numModulesY-1)*moduleStride + filterSize >= imgSizeY)
+        assert(moduleStride <= filterSize)
+
+        imgsPerThread = 4 if numImages % 128 == 0 else 2 if numImages % 64 == 0 else 1
+        filtersPerThread = threadsY = 4;
+        if (numImgColors <= 3):
+            filtersPerThread = 16 if numFiltersPerGroup % 64 == 0 else 12 if numFiltersPerGroup % 48 == 0 else 8 if numFiltersPerGroup % 32 == 0 else 4
+        else:
+            filtersPerThread = 16 if numFiltersPerGroup % 64 == 0 else 8 if numFiltersPerGroup % 32 == 0 else 4
+            threadsY = 8 if numFiltersPerGroup % 128 == 0 and numFilterColors % 8 == 0  and imgsPerThread != 4 else 4
+        threadsX = 32;
+
+        threads = (threadsX, threadsY, 1)
+        blocks = (divup(numImages, threads[0] * imgsPerThread), (numModules * numFilters) / (threads[1] * filtersPerThread))
+        
+        checkImgBounds = numImages % (threads[0]*imgsPerThread) != 0
+        scale = scaleTargets != 0
+        # if (scaleTargets == 0):
+        #     targets.resize(numFilters * numModules, numImages)
+        # else:
+        #     assert(targets.getNumRows() == numFilters * numModules)
+        #     assert(targets.getNumCols() == numImages)
+
+        #cudaStream_t stream = NVMatrix::getDefaultStream();
 
         template_params = {
-            'B_Y': 128,
-            'B_X': 128,
-            'imgsPerThread': 4,
-            'filtersPerThread': 1,
+            'B_Y': threads[1],
+            'B_X': threads[0],
+            'imgsPerThread': imgsPerThread,
+            'filtersPerThread': filtersPerThread,
             'numColors': 3,
             'pixelCache': 4,
-            'scaleFlag': 'false',
+            'scaleFlag': str(scale).lower(),
             'checkImgBounds': 'true'
             }
-
-        kernel = _get_cuda_conv_kernel(self.cubin_path, clss, op, size, template_params)
-        params = [grid, (4, 32, 1), A.gpudata, B.gpudata, C.gpudata]
-        params.extend(self.get_kernel_args(128, 128, 64, 64, 5, 0, 1, 1, 2, 2, 1, 1, True))
+        kernel_args = [numImages, numFilters,
+                    imgSizeY, imgSizeX, filterSize, paddingStart,
+                    moduleStride,
+                    13, 13, imgStride,
+                    scaleTargets, scaleOutput,
+                    conv]
+        # print kernel_args
+        # kernel_args = [numImages, numFilters, imgSizeY, imgSizeX, filterSize, 0, moduleStride, 13, 13, imgStride, scaleTargets, scaleOutput, conv]
+        # print kernel_args
+        # print A.shape
+        # print B.shape
+        # print C.shape
+        kernel = _get_cuda_conv_kernel(template_params)
+        params = [blocks, threads, A.gpudata, B.gpudata, C.gpudata]
+        params.extend(kernel_args)
         # params = [grid, block, _get_rand_state(),
         #           C.gpudata, A.gpudata, B.gpudata,
         #           alpha, flags ]
-        # params.extend(args)
         kernel.prepared_call(*params)
-
-
                
     def _execute_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
         assert B.dtype == C.dtype
@@ -1039,6 +1119,12 @@ class OpTreeNode(tuple):
     def __abs__      (self):        return self.build("abs", self,  None)
     def __neg__      (self):        return self.build("neg", self,  None)
 
+def divup(a, b):
+    if (a % b):
+        return a / b + 1
+    else:
+        return a / b
+
 def _contiguous_strides(itemsize, shape):
     if shape:
         strides = [itemsize]
@@ -1089,7 +1175,7 @@ def _get_conv_kernel(path, clss, op, size):
     return func
 
 #@context_dependent_memoize
-def _get_cuda_conv_kernel(path, clss, op, size, template_params):
+def _get_cuda_conv_kernel(template_params):
     module = cudaconvnet.get_module(template_params)
     kernel = "filterActs_YxX_color_preload_ty_4_tx_32_i_4_f_12_px_4_cc_3_tex"
     kernel = "filterActs_YxX_color"

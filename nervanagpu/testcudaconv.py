@@ -2,6 +2,7 @@ import logging
 import numpy as np
 from nervanagpu import NervanaGPU
 import pycuda.autoinit
+import math
 logging.basicConfig(level=20)
 logger = logging.getLogger()
 
@@ -30,35 +31,57 @@ def run():
     # * targets:     (numFilters, numModulesY, numModulesX, numImages)
 
     N = 128
-    C = 8
-    K = 8
+    C = 3
+    K = 64
 
-    D = 3
+    D = 1
     H = 64
     W = 64
 
-    T = 3
+    T = 1
     R = 5
     S = 5
 
-    numFilters = 1
+    pad_h = pad_w = 0
+    str_h = str_w = 3
 
     layer = ng.conv_layer(bt, N, C, K,
             D=D, H=H, W=W,
             T=T, R=R, S=S,
-            pad_d=0, pad_h=0, pad_w=0,
-            str_d=1, str_h=1, str_w=1,
+            pad_d=0, pad_h=pad_h, pad_w=pad_w,
+            str_d=1, str_h=str_h, str_w=str_w,
             grid_P=0, grid_Q=0, update_size=None)
-    I = ng.ones((D, H, W, N))
-    F = ng.ones((T, S*R, numFilters))
-    O = ng.zeros((numFilters, 13, 13, 128))
+
+    numImages = N 
+    numFilters = K
+    imgSizeY = H
+    imgSizeX = W 
+    filterSize = R
+    paddingStart = pad_w
+    moduleStride = str_w
+    numModulesY = int(math.ceil(float(H - R + 1 + 2*pad_h) / str_h))
+    numModulesX = int(math.ceil(float(W - S + 1 + 2*pad_w) / str_w))
+    #numModulesY = int((imgSizeY + 2.0*pad_h + str_h) / str_h)
+    #numModulesX = int((imgSizeX + 2.0*pad_w + str_w) / str_w)
+    imgStride = N
+    scaleTargets = 1
+    scaleOutputs = 1
+    conv = True
+
+    layer.kernel_args = [numImages, numFilters,
+                imgSizeY, imgSizeX, filterSize, paddingStart,
+                moduleStride,
+                numModulesY, numModulesX, imgStride,
+                scaleTargets, scaleOutputs,
+                conv]
+
+    I = ng.ones((C, H, W, N))
+    F = ng.ones((C, S*R, numFilters))
+    O = ng.zeros((numFilters, numModulesY, numModulesX, N))
     layer.sizeI = I.size
     layer.sizeF = F.size
     layer.sizeO = O.size
 
-    #kwargs = {'backend': be, 'batch_size': 1, 'nofm':192}
-    #layer.initialize(kwargs)
-    inputs = np.zeros((5, 5))
     ng.fprop_cuda_conv(layer, I, F, O)
 
 
