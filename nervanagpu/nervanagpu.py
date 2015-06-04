@@ -20,7 +20,8 @@ from struct import unpack_from
 from pytools import memoize, memoize_method
 from float_ew import call_compound_kernel
 from layers import DataLayer, FullLayer, ConvLayer, PoolLayer, _get_sm_count
-
+from cudaconvnet import cudaconvnet
+import math
 
 class GPUTensor(object):
 
@@ -535,6 +536,17 @@ class NervanaGPU(object):
             layer.fprop_grid, layer.fprop_block, layer.kernel_args, layer.lut_size,
             I, F, O, alpha, relu, False, repeat)
 
+    def fprop_cuda_conv(self, layer, I, F, O, alpha=1.0, relu=False, repeat=1):
+
+        assert layer.sizeI == I.size
+        assert layer.sizeF == F.size
+        assert layer.sizeO == O.size
+
+        return self._execute_cuda_conv(
+            layer, "fprop", layer.fprop_size,
+            layer.fprop_grid, layer.fprop_block, layer.kernel_args, layer.lut_size,
+            I, F, O, alpha, relu, False, repeat)
+
     def bprop_conv(self, layer, F, E, grad_I, alpha=1.0, repeat=1):
 
         assert layer.sizeF == F.size
@@ -557,8 +569,133 @@ class NervanaGPU(object):
             layer.updat_grid, layer.updat_block, layer.update_args, 0,
             I, E, grad_F, alpha, False, True, repeat)
 
-    def _execute_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
+    def get_kernel_args(self, numImages, numFilters,
+                imgSizeY, imgSizeX, filterSize, paddingStart,
+                moduleStride,
+                numModulesY, numModulesX, imgStride,
+                scaleTargets, scaleOutputs,
+                conv):
 
+        return  [numImages, numFilters,
+                imgSizeY, imgSizeX, filterSize, paddingStart,
+                moduleStride,
+                numModulesY, numModulesX, imgStride,
+                scaleTargets, scaleOutputs,
+                conv]
+
+    def _execute_cuda_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
+        assert B.dtype == C.dtype
+
+        imgSizeY = A.shape[1]
+        numModulesY = C.shape[1]
+        numModulesX = C.shape[2]
+        paddingStart = 0
+        moduleStride = layer.strides[1]
+        numImgColors = A.shape[0]
+        numGroups = 1
+        scaleTargets = False
+        scaleOutput = False
+        conv = True
+
+        kernel, args = cudaconvnet.get_kernel_func(A, B, C,
+                       imgSizeY, numModulesY, numModulesX, paddingStart, moduleStride,
+                       numImgColors, numGroups,
+                       scaleTargets, scaleOutput, conv)
+        print len(args)
+        assert len(args) > 2
+        kernel.prepared_call(*args)
+
+
+    def _filterActs(self, A, B, C,
+                       imgSizeY, numModulesY, numModulesX, paddingStart, moduleStride,
+                       numImgColors, numGroups,
+                       scaleTargets, scaleOutput, conv):
+        # A: images:      (numColors, imgSizeY, imgSizeX, numImages) with stride given
+        # B: filters:     (numColors, filterPixels, numFilters) if conv
+        # *              (numModules, numColors, filterPixels, numFilters) otherwise
+        # *
+        # C: targets:     (numFilters, numModulesY, numModulesX, numImages)
+        numFilterColors = numImgColors / numGroups
+        numFilters = B.shape[2]
+        numModules = numModulesY * numModulesX
+        numImages = A.shape[3]
+        imgPixels = A.shape[1] * A.shape[2]
+        imgSizeX = imgPixels / imgSizeY
+        filterModuleMult = 1 if conv else numModules #conv ? 1 : numModules
+       
+        assert(numGroups > 1 or (numImgColors > 0 and (numImgColors <= 3 or numImgColors % 4 == 0)))
+        assert(numGroups == 1 or numFilterColors % 4 == 0)
+        assert(numFilters % (16 * numGroups) == 0)
+        assert(numImgColors % numGroups == 0)
+        assert(A.size/A.shape[3] == imgPixels * numImgColors)
+        assert(imgSizeY * imgSizeX == imgPixels)
+        numFiltersPerGroup = numFilters / numGroups
+        imgStride = A.shape[3] # images does not need to be a contiguous matri
+        filterPixels = B.shape[1] # (filterModuleMult * numFilterColors)
+        filterSize = int(math.sqrt(filterPixels))
+        assert(filterSize * filterSize == filterPixels)
+        #print B.shape
+        #print numFilterColors, filterPixels, filterModuleMult
+        #assert(B.size == filterModuleMult * numFilterColors * filterPixels)
+        
+        # These routines don't handle the case when only part of the image is visited in the convolutio
+        assert(paddingStart <= 0)
+        print paddingStart + (numModulesX-1)*moduleStride + filterSize
+        assert(paddingStart + (numModulesX-1)*moduleStride + filterSize >= imgSizeX)
+        assert(paddingStart + (numModulesY-1)*moduleStride + filterSize >= imgSizeY)
+        assert(moduleStride <= filterSize)
+
+        imgsPerThread = 4 if numImages % 128 == 0 else 2 if numImages % 64 == 0 else 1
+        filtersPerThread = threadsY = 4;
+        if (numImgColors <= 3):
+            filtersPerThread = 16 if numFiltersPerGroup % 64 == 0 else 12 if numFiltersPerGroup % 48 == 0 else 8 if numFiltersPerGroup % 32 == 0 else 4
+        else:
+            filtersPerThread = 16 if numFiltersPerGroup % 64 == 0 else 8 if numFiltersPerGroup % 32 == 0 else 4
+            threadsY = 8 if numFiltersPerGroup % 128 == 0 and numFilterColors % 8 == 0  and imgsPerThread != 4 else 4
+        threadsX = 32;
+
+        threads = (threadsX, threadsY, 1)
+        blocks = (divup(numImages, threads[0] * imgsPerThread), (numModules * numFilters) / (threads[1] * filtersPerThread))
+        
+        checkImgBounds = numImages % (threads[0]*imgsPerThread) != 0
+        scale = scaleTargets != 0
+        if (scaleTargets == 0):
+            C = C.reshape((numFilters * numModules, numImages))
+        else:
+            assert(C.size/C.shape[3] == numFilters * numModules)
+            assert(C.shape[3] == numImages)
+
+        #cudaStream_t stream = NVMatrix::getDefaultStream();
+
+        template_params = {
+            'B_Y': threads[1],
+            'B_X': threads[0],
+            'imgsPerThread': imgsPerThread,
+            'filtersPerThread': filtersPerThread,
+            'numColors': 3,
+            'pixelCache': 4,
+            'scaleFlag': str(scale).lower(),
+            'checkImgBounds': 'true'
+            }
+        kernel_args = [numImages, numFilters,
+                    imgSizeY, imgSizeX, filterSize, paddingStart,
+                    moduleStride,
+                    numModulesY, numModulesX, imgStride,
+                    scaleTargets, scaleOutput,
+                    conv]
+        print kernel_args
+        print A.shape
+        print B.shape
+        print C.shape
+        kernel = _get_cuda_conv_kernel(template_params)
+        params = [blocks, threads, A.gpudata, B.gpudata, C.gpudata]
+        params.extend(kernel_args)
+        # params = [grid, block, _get_rand_state(),
+        #           C.gpudata, A.gpudata, B.gpudata,
+        #           alpha, flags ]
+        kernel.prepared_call(*params)
+               
+    def _execute_conv(self, layer, op, size, grid, block, args, shared, A, B, C, alpha, relu, zero, repeat):
         assert B.dtype == C.dtype
 
         clss  = "hconv" if C.dtype.type is np.float16 else "sconv"
@@ -569,7 +706,6 @@ class NervanaGPU(object):
         if C.rounding: flags |= 1
         if relu:       flags |= 2
 
-        kernel = _get_conv_kernel(self.cubin_path, clss, op, size)
         params = [grid, block, _get_rand_state(),
                   C.gpudata, A.gpudata, B.gpudata,
                   alpha, flags ]
@@ -982,6 +1118,12 @@ class OpTreeNode(tuple):
     def __abs__      (self):        return self.build("abs", self,  None)
     def __neg__      (self):        return self.build("neg", self,  None)
 
+def divup(a, b):
+    if (a % b):
+        return a / b + 1
+    else:
+        return a / b
+
 def _contiguous_strides(itemsize, shape):
     if shape:
         strides = [itemsize]
@@ -1030,6 +1172,15 @@ def _get_conv_kernel(path, clss, op, size):
     func.prepare("PPPPfIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
     #print "Loaded: ", kernel
     return func
+
+#@context_dependent_memoize
+def _get_cuda_conv_kernel(params):
+    func, args = cudaconvnet.get_kernel_func(params)
+    if len(params == 16):
+        func.prepare("PPPIIIIIIIIIIff?")
+    else:
+        func.prepare("PPPIIIIIIIIIIff?")
+    return func, args
 
 @context_dependent_memoize
 def _get_pool_kernel(path, clss, op):

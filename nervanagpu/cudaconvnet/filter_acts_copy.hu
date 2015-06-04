@@ -1,0 +1,60 @@
+template <int B_Y, int B_X, int imgsPerThread, int filtersPerThread, int numColors, int pixelCache,
+          bool scale, bool checkImgBounds>
+//__launch_bounds__(128,3)
+__global__ void filterActs_YxX_color_preload_ty_4_tx_32_i_4_f_16_px_4_cc_3_tex(cudaTextureObject_t images, cudaTextureObject_t filters, float* targets,
+                                       const int numImages, const int numFilters,
+                                       const int imgSizeY, const int imgSizeX, const int filterSize, const int paddingStart,
+                                       const int moduleStride,
+                                       const int numModulesY, const int numModulesX, const int imgStride,
+                                       const float scaleTargets, const float scaleOutputs,
+                                       const bool conv/*, const bool noloads*/) {
+
+template <int B_Y, int B_X, int imgsPerThread, int filtersPerThread, int numColors, int pixelCache,
+          bool scale, bool checkImgBounds>
+__global__ void filterActs_YxX_color_preload_ty_4_tx_32_i_4_f_12_px_4_cc_3_tex(cudaTextureObject_t images, cudaTextureObject_t filters, float* targets,
+                                       const int numImages, const int numFilters,
+                                       const int imgSizeY, const int imgSizeX, const int filterSize, const int paddingStart,
+                                       const int moduleStride,
+                                       const int numModulesY, const int numModulesX, const int imgStride,
+                                       const float scaleTargets, const float scaleOutputs,
+                                       const bool conv/*, const bool noloads*/)
+
+template <int B_Y, int B_X, int imgsPerThread, int filtersPerThread, int colorCache,
+          bool scale, bool checkImgBounds>
+__global__ void filterActs_YxX_sparse2_preload_ty_4_tx_32_i_4_f_16_c_4(float* images, float* filters, float* targets,
+                                       const int numImages, const int numFilters,
+                                       const int imgSizeY, const int imgSizeX, const int filterSize, const int paddingStart,
+                                       const int moduleStride,
+                                       const int numModulesY, const int numModulesX, const int imgStride, const int numImgColors,
+                                       const int numGroups,
+                                       const float scaleTargets, const float scaleOutputs,
+                                       const bool conv/*, const bool noloads*/)                             
+template <int B_Y, int B_X, int imgsPerThread, int filtersPerThread, int colorCache,
+          bool scale, bool checkImgBounds>
+__global__ void filterActs_YxX_sparse2_preload_ty_4_tx_32_i_4_f_16_c_4_tex(cudaTextureObject_t images, cudaTextureObject_t filters, float* targets,
+                                       const int numImages, const int numFilters,
+                                       const int imgSizeY, const int imgSizeX, const int filterSize, const int paddingStart,
+                                       const int moduleStride,
+                                       const int numModulesY, const int numModulesX, const int imgStride, const int numImgColors,
+                                       const int numGroups,
+                                       const float scaleTargets, const float scaleOutputs,
+                                       const bool conv/*, const bool noloads*/) {                                       
+ template <int B_Y, int B_X, int imgsPerThread, int filtersPerThread, int numColors, int pixelCache,
+          bool scale, bool checkImgBounds>
+__global__ void filterActs_YxX_color(float* images, float* filters, float* targets,
+                                   const int numImages, const int numFilters,
+                                   const int imgSizeY, const int imgSizeX, const int filterSize, const int paddingStart,
+                                   const int moduleStride,
+                                   const int numModulesY, const int numModulesX, const int imgStride,
+                                   const float scaleTargets, const float scaleOutputs,
+                                   const bool conv) {                                       
+template <int B_Y, int B_X, int imgsPerThread, int filtersPerThread, int colorCache,
+          bool scale, bool checkImgBounds>
+__global__ void filterActs_YxX_sparse2(float* images, float* filters, float* targets,
+                                       const int numImages, const int numFilters,
+                                       const int imgSizeY, const int imgSizeX, const int filterSize, const int paddingStart,
+                                       const int moduleStride,
+                                       const int numModulesY, const int numModulesX, const int imgStride, const int numImgColors,
+                                       const int numGroups, 
+                                       const float scaleTargets, const float scaleOutputs,
+                                       const bool conv) {    
