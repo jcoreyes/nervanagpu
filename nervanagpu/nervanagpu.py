@@ -606,6 +606,7 @@ class NervanaGPU(object):
         kernel.prepared_call(*args)
 
 
+
     def _filterActs(self, A, B, C,
                        imgSizeY, numModulesY, numModulesX, paddingStart, moduleStride,
                        numImgColors, numGroups,
@@ -615,6 +616,13 @@ class NervanaGPU(object):
         # *              (numModules, numColors, filterPixels, numFilters) otherwise
         # *
         # C: targets:     (numFilters, numModulesY, numModulesX, numImages)
+
+        # * images:      (numColors, imgSizeY, imgSizeX, numImages) with stride given
+        # * filters:     (numColors, filterPixels, numFilters) if conv
+        # *              (numModules, numColors, filterPixels, numFilters) otherwise
+        # *
+        # * targets:     (numFilters, numModulesY, numModulesX, numImages)
+
         numFilterColors = numImgColors / numGroups
         numFilters = B.shape[2]
         numModules = numModulesY * numModulesX
@@ -637,7 +645,7 @@ class NervanaGPU(object):
         #print B.shape
         #print numFilterColors, filterPixels, filterModuleMult
         #assert(B.size == filterModuleMult * numFilterColors * filterPixels)
-        
+
         # These routines don't handle the case when only part of the image is visited in the convolutio
         assert(paddingStart <= 0)
         print paddingStart + (numModulesX-1)*moduleStride + filterSize
@@ -681,6 +689,7 @@ class NervanaGPU(object):
                     imgSizeY, imgSizeX, filterSize, paddingStart,
                     moduleStride,
                     numModulesY, numModulesX, imgStride,
+                    13, 13, imgStride,
                     scaleTargets, scaleOutput,
                     conv]
         print kernel_args
