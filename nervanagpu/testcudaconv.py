@@ -39,10 +39,10 @@ def run():
     W = 64
 
     T = 1
-    R = 5
-    S = 5
+    R = 8
+    S = 8
 
-    pad_h = pad_w = 0
+    pad_h = pad_w = 2
     str_h = str_w = 3
 
     layer = ng.conv_layer(bt, N, C, K,

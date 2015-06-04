@@ -612,9 +612,6 @@ class NervanaGPU(object):
         # *              (numModules, numColors, filterPixels, numFilters) otherwise
         # *
         # * targets:     (numFilters, numModulesY, numModulesX, numImages)
-        images = A.gpudata
-        filters = B.gpudata
-        targets = C.gpudata
         numFilterColors = numImgColors / numGroups
         numFilters = B.shape[2]
         numModules = numModulesY * numModulesX
@@ -640,8 +637,8 @@ class NervanaGPU(object):
         # These routines don't handle the case when only part of the image is visited in the convolutio
         assert(paddingStart <= 0)
         print paddingStart + (numModulesX-1)*moduleStride + filterSize
-        #assert(paddingStart + (numModulesX-1)*moduleStride + filterSize >= imgSizeX)
-        #assert(paddingStart + (numModulesY-1)*moduleStride + filterSize >= imgSizeY)
+        assert(paddingStart + (numModulesX-1)*moduleStride + filterSize >= imgSizeX)
+        assert(paddingStart + (numModulesY-1)*moduleStride + filterSize >= imgSizeY)
         assert(moduleStride <= filterSize)
 
         imgsPerThread = 4 if numImages % 128 == 0 else 2 if numImages % 64 == 0 else 1
@@ -658,11 +655,11 @@ class NervanaGPU(object):
         
         checkImgBounds = numImages % (threads[0]*imgsPerThread) != 0
         scale = scaleTargets != 0
-        # if (scaleTargets == 0):
-        #     targets.resize(numFilters * numModules, numImages)
-        # else:
-        #     assert(targets.getNumRows() == numFilters * numModules)
-        #     assert(targets.getNumCols() == numImages)
+        if (scaleTargets == 0):
+            C = C.reshape((numFilters * numModules, numImages))
+        else:
+            assert(C.size/C.shape[3] == numFilters * numModules)
+            assert(C.shape[3] == numImages)
 
         #cudaStream_t stream = NVMatrix::getDefaultStream();
 
@@ -682,12 +679,10 @@ class NervanaGPU(object):
                     13, 13, imgStride,
                     scaleTargets, scaleOutput,
                     conv]
-        # print kernel_args
-        # kernel_args = [numImages, numFilters, imgSizeY, imgSizeX, filterSize, 0, moduleStride, 13, 13, imgStride, scaleTargets, scaleOutput, conv]
-        # print kernel_args
-        # print A.shape
-        # print B.shape
-        # print C.shape
+        print kernel_args
+        print A.shape
+        print B.shape
+        print C.shape
         kernel = _get_cuda_conv_kernel(template_params)
         params = [blocks, threads, A.gpudata, B.gpudata, C.gpudata]
         params.extend(kernel_args)
