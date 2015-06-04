@@ -1006,28 +1006,37 @@ def get_kernel_func(A, B, C,
     template_name = t_param_name1 if len(template_param) == len(t_param_name1) else t_param_name2
     print func
     print template_param
-    # for (key, val) in zip(template_name, template_param):
-    #     kernel_code = kernel_code.replace(key, str(val).lower())
+    print kernel_args[5:]
+    print zip(template_name, template_param)
+    for (key, val) in zip(template_name, template_param):
+        kernel_code = kernel_code.replace(key, str(val).lower())
 
-    # unused_params = ['numColors', 'pixelCache', 'colorCache']
-    # for unused_key in unused_params:
-    #     if unused_key not in template_name:
-    #         kernel_code = kernel_code.replace(unused_key, str(1))
+    unused_params = ['numColors', 'pixelCache', 'colorCache']
+    for unused_key in unused_params:
+        if unused_key not in template_name:
+            kernel_code = kernel_code.replace(unused_key, '4')
 
-    template_params = {
-        'B_Y': 4,
-        'B_X': 32,
-        'imgsPerThread': 4,
-        'filtersPerThread': 16,
-        'numColors': 3,
-        'pixelCache': 4,
-        'scale': 'false',
-        'checkImgBounds': 'false',
-        'colorCache': 4
-        }
+    # template_params = {
+    #     'B_Y': 4,
+    #     'B_X': 32,
+    #     'imgsPerThread': 4,
+    #     'filtersPerThread': 16,
+    #     'numColors': 3,
+    #     'pixelCache': 4,
+    #     'scale': 'false',
+    #     'checkImgBounds': 'false',
+    #     'colorCache': 4
+    #     }
+    # for key, val in template_params.items():
+    #     kernel_code = kernel_code.replace(key, str(val))
 
-    for key, val in template_params.items():
-        kernel_code = kernel_code.replace(key, str(val))
+    #             imgSizeY, imgSizeX, filterSize, paddingStart,
+    #             moduleStride,
+    #             numModulesY, numModulesX, imgStride,
+    #             scaleTargets, scaleOutputs,
+    #             conv
+    #kernel_args = [blocks, threads, A.gpudata, B.gpudata, C.gpudata, 128, 64, 64, 64, 8, 0, 3, 13, 13, 128, False, False, True]
+
 
     module = SourceModule(kernel_code)
     kernel_func = module.get_function(func)

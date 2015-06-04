@@ -43,7 +43,7 @@ def run():
     S = 8
 
     pad_h = pad_w = 2
-    str_h = str_w = 3
+    str_h = str_w = 4
 
     layer = ng.conv_layer(bt, N, C, K,
             D=D, H=H, W=W,
@@ -54,26 +54,10 @@ def run():
 
     numImages = N 
     numFilters = K
-    imgSizeY = H
-    imgSizeX = W 
-    filterSize = R
-    paddingStart = pad_w
-    moduleStride = str_w
+
     numModulesY = int(math.ceil(float(H - R + 1 + 2*pad_h) / str_h))
     numModulesX = int(math.ceil(float(W - S + 1 + 2*pad_w) / str_w))
-    #numModulesY = int((imgSizeY + 2.0*pad_h + str_h) / str_h)
-    #numModulesX = int((imgSizeX + 2.0*pad_w + str_w) / str_w)
-    imgStride = N
-    scaleTargets = 1
-    scaleOutputs = 1
-    conv = True
-
-    layer.kernel_args = [numImages, numFilters,
-                imgSizeY, imgSizeX, filterSize, paddingStart,
-                moduleStride,
-                numModulesY, numModulesX, imgStride,
-                scaleTargets, scaleOutputs,
-                conv]
+    print "Num Modules ", numModulesX, numModulesY
 
     I = ng.ones((C, H, W, N))
     F = ng.ones((C, S*R, numFilters))
