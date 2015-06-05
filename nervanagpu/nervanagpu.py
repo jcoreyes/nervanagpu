@@ -593,8 +593,8 @@ class NervanaGPU(object):
         moduleStride = layer.strides[1]
         numImgColors = A.shape[0]
         numGroups = 1
-        scaleTargets = False
-        scaleOutput = False
+        scaleTargets = 1
+        scaleOutput = 1
         conv = True
 
         kernel, args = cudaconvnet.get_kernel_func(A, B, C,
@@ -616,6 +616,7 @@ class NervanaGPU(object):
         if C.rounding: flags |= 1
         if relu:       flags |= 2
 
+        kernel = _get_conv_kernel(self.cubin_path, clss, op, size)
         params = [grid, block, _get_rand_state(),
                   C.gpudata, A.gpudata, B.gpudata,
                   alpha, flags ]

@@ -989,24 +989,12 @@ def get_kernel_func(A, B, C,
 
     t_param_name1 = ['B_Y', 'B_X', 'imgsPerThread', 'filtersPerThread', 'colorCache', 'scale', 'checkImgBounds']
     t_param_name2 = ['B_Y', 'B_X', 'imgsPerThread', 'filtersPerThread', 'numColors', 'pixelCache', 'scale', 'checkImgBounds']
-
-    # test = {
-    #     'B_Y': 1,
-    #     'B_X': 1,
-    #     'imgsPerThread': 1,
-    #     'filtersPerThread': 1,
-    #     'numColors': 3,
-    #     'pixelCache': 4,
-    #     'scale': 'false',
-    #     'checkImgBounds': 'true',
-    #     'colorCache': 4
-    #     }
     
     template_name = t_param_name1 if len(template_param) == len(t_param_name1) else t_param_name2
     print func
-    print blocks, threads
-    print kernel_args[5:]
-    print zip(template_name, template_param)
+    print "Block and thread dim:", blocks, threads
+    print "Kernel args:", kernel_args[5:]
+    print "Template param:", zip(template_name, template_param)
 
     for (key, val) in zip(template_name, template_param):
         kernel_code = kernel_code.replace(key, str(val).lower())
@@ -1026,13 +1014,4 @@ def get_kernel_func(A, B, C,
     else:
         kernel_func.prepare("PPPIIIIIIIIIIIIff?")
     return kernel_func, kernel_args
-
-def get_module(template_params):
-    kernel_code = "" 
-    #template <int B_Y, int B_X, int imgsPerThread, int filtersPerThread, int numColors, int pixelCache,
-    #          bool scale, bool checkImgBounds>
-    #4, 32, 4, 16, 3, 4
-    for key, val in template_params.items():
-        kernel_code = kernel_code.replace(key, str(val))
-    return SourceModule(kernel_code)
 
